@@ -2,6 +2,7 @@ import string
 from random import sample
 
 from flask import request, jsonify, url_for
+from http import HTTPStatus
 
 from . import app, db
 from .models import URLMap
@@ -30,10 +31,11 @@ def is_short_id_valid(short_id):
     return True
 
 
-@app.route('/api/id/', methods=['POST'])
-def create_shortcut():
-    data = request.get_json()
-    unique_short_id = get_unique_short_id(6)
+def validate_api_id_request(data):
+    """
+    Raises an error if request is Invalid
+    Returns custom_id if provided otherwise None
+    """
     if data is None:
         raise InvalidAPIUsage('Отсутствует тело запроса')
     if 'url' not in data:
@@ -44,22 +46,36 @@ def create_shortcut():
             raise InvalidAPIUsage('Предложенный вариант короткой ссылки уже существует.')
         if data['custom_id'] and not is_short_id_valid(data['custom_id']):
             raise InvalidAPIUsage('Указано недопустимое имя для короткой ссылки')
-        unique_short_id = data['custom_id'] or unique_short_id
+        return data['custom_id']
+
+
+@app.route('/api/id/', methods=['POST'])
+def create_shortcut():
+    data = request.get_json()
+
+    validate_api_id_request(data)
+
+    unique_short_id = validate_api_id_request(data) or get_unique_short_id(6)
+
     urlmap = URLMap(
         original=data.get('url'),
         short=unique_short_id
     )
     db.session.add(urlmap)
     db.session.commit()
-    return jsonify({"url": urlmap.original,
-                    "short_link": url_for(
-                        'redirect_to_original', url=urlmap.short, _external=True
-                    )}), 201
+    return jsonify(
+        {
+            "url": urlmap.original,
+            "short_link": url_for(
+                'redirect_to_original', url=urlmap.short, _external=True
+            )
+        }
+    ), HTTPStatus.CREATED
 
 
 @app.route('/api/id/<string:short_id>/', methods=['GET'])
 def get_original(short_id):
     urlmap = URLMap.query.filter_by(short=short_id).first()
     if urlmap is None:
-        raise InvalidAPIUsage('Указанный id не найден', status_code=404)
-    return jsonify({'url': urlmap.original}), 200
+        raise InvalidAPIUsage('Указанный id не найден', status_code=HTTPStatus.NOT_FOUND)
+    return jsonify({'url': urlmap.original}), HTTPStatus.OK
